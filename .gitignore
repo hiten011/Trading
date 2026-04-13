@@ -1,0 +1,17 @@
+# Secrets - never commit these
+.env
+access_token.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Logs
+*.log
