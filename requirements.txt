@@ -1,2 +1,8 @@
-kiteconnect==5.0.1
-python-dotenv==1.0.0
+# OpenAlgo Python SDK - for placing trades via the OpenAlgo server
+openalgo>=1.0.47
+
+# Direct Kite API (fallback / auth.py)
+kiteconnect>=5.0.1
+
+# Environment variable loading
+python-dotenv>=1.0.0

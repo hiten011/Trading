@@ -1,6 +1,12 @@
 # Secrets - never commit these
 .env
+openalgo/.env
 access_token.txt
+
+# OpenAlgo runtime data
+openalgo/db/
+openalgo/log/
+openalgo/tmp/
 
 # Python
 __pycache__/

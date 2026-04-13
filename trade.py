@@ -1,74 +1,101 @@
 """
-Kite Trade Executor
--------------------
-Places orders using a saved access_token.
-Run auth.py first to generate the access_token.
+Trade Executor - powered by OpenAlgo
+--------------------------------------
+Prerequisites:
+  1. Start the OpenAlgo server:   ./start_server.sh
+  2. Open http://127.0.0.1:5000  in your browser
+  3. Log in with your Zerodha account
+  4. Go to API Keys section and copy your OpenAlgo API key
+  5. Set OPENALGO_API_KEY in your .env file
+
+Usage:
+  python trade.py
 """
 
 import os
 import sys
-from kiteconnect import KiteConnect
 from dotenv import load_dotenv
+from openalgo import api
 
 load_dotenv()
 
-API_KEY = os.getenv("KITE_API_KEY")
-TOKEN_FILE = "access_token.txt"
+OPENALGO_API_KEY = os.getenv("OPENALGO_API_KEY")
+OPENALGO_HOST    = os.getenv("OPENALGO_HOST", "http://127.0.0.1:5000")
 
 
-def load_access_token() -> str:
-    if not os.path.exists(TOKEN_FILE):
-        print("ERROR: access_token.txt not found.")
-        print("Please run `python auth.py` first to log in.")
+def get_client() -> api:
+    if not OPENALGO_API_KEY:
+        print("ERROR: OPENALGO_API_KEY not set in .env")
+        print("  1. Open http://127.0.0.1:5000 and log in")
+        print("  2. Go to API Keys, copy your key")
+        print("  3. Add OPENALGO_API_KEY=<your-key> to .env")
         sys.exit(1)
-    with open(TOKEN_FILE, "r") as f:
-        return f.read().strip()
+    return api(api_key=OPENALGO_API_KEY, host=OPENALGO_HOST)
 
 
-def get_kite() -> KiteConnect:
-    kite = KiteConnect(api_key=API_KEY)
-    kite.set_access_token(load_access_token())
-    return kite
-
-
-def buy(symbol: str, quantity: int, exchange: str = "NSE") -> dict:
-    kite = get_kite()
+def buy(symbol: str, quantity: int, exchange: str = "NSE",
+        product: str = "CNC", strategy: str = "python") -> dict:
+    client = get_client()
     print(f"\nPlacing BUY order: {quantity} x {symbol} on {exchange} ...")
-    order_id = kite.place_order(
-        variety=kite.VARIETY_REGULAR,
+    response = client.placeorder(
+        strategy=strategy,
+        symbol=symbol,
         exchange=exchange,
-        tradingsymbol=symbol,
-        transaction_type=kite.TRANSACTION_TYPE_BUY,
+        action="BUY",
+        price_type="MARKET",
+        product=product,
         quantity=quantity,
-        product=kite.PRODUCT_CNC,       # CNC = delivery (equity/ETF)
-        order_type=kite.ORDER_TYPE_MARKET,
     )
-    print(f"Order placed successfully! Order ID: {order_id}")
-    return order_id
+    if response.get("status") == "success":
+        order_id = response.get("orderid")
+        print(f"Order placed successfully! Order ID: {order_id}")
+        return response
+    else:
+        print(f"Order failed: {response}")
+        sys.exit(1)
 
 
-def get_order_status(order_id: str) -> dict:
-    kite = get_kite()
-    orders = kite.orders()
-    for order in orders:
-        if str(order["order_id"]) == str(order_id):
-            return order
-    return {}
+def sell(symbol: str, quantity: int, exchange: str = "NSE",
+         product: str = "CNC", strategy: str = "python") -> dict:
+    client = get_client()
+    print(f"\nPlacing SELL order: {quantity} x {symbol} on {exchange} ...")
+    response = client.placeorder(
+        strategy=strategy,
+        symbol=symbol,
+        exchange=exchange,
+        action="SELL",
+        price_type="MARKET",
+        product=product,
+        quantity=quantity,
+    )
+    if response.get("status") == "success":
+        order_id = response.get("orderid")
+        print(f"Order placed successfully! Order ID: {order_id}")
+        return response
+    else:
+        print(f"Order failed: {response}")
+        sys.exit(1)
+
+
+def get_order_status(order_id: str, strategy: str = "python") -> dict:
+    client = get_client()
+    return client.orderstatus(order_id=order_id, strategy=strategy)
 
 
 if __name__ == "__main__":
-    # Buy 1 share of GOLDIETF on NSE
-    SYMBOL = "GOLDIETF"
-    QUANTITY = 1
-    EXCHANGE = "NSE"
+    # Buy 1 share of GOLDIETF on NSE (CNC = delivery)
+    response = buy(
+        symbol="GOLDIETF",
+        quantity=1,
+        exchange="NSE",
+        product="CNC",
+    )
 
-    order_id = buy(SYMBOL, QUANTITY, EXCHANGE)
-
-    # Show order status
-    status = get_order_status(order_id)
-    if status:
-        print(f"\nOrder Status : {status.get('status')}")
-        print(f"Symbol       : {status.get('tradingsymbol')}")
-        print(f"Quantity     : {status.get('quantity')}")
-        print(f"Order Type   : {status.get('order_type')}")
-        print(f"Price        : {status.get('average_price', 'pending')}")
+    order_id = response.get("orderid")
+    if order_id:
+        status = get_order_status(order_id)
+        data = status.get("data", {})
+        print(f"\nOrder Status : {data.get('order_status', 'N/A')}")
+        print(f"Symbol       : {data.get('tradingsymbol', 'N/A')}")
+        print(f"Quantity     : {data.get('quantity', 'N/A')}")
+        print(f"Price        : {data.get('average_price', 'pending')}")
