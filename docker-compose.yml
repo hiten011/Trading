@@ -1,0 +1,128 @@
+# =============================================================================
+# PKScreener + custom Telegram alerts
+# =============================================================================
+#   docker compose run --rm screener        one-shot scan, results to terminal
+#   docker compose up -d alerts             your own indicator, on a schedule
+#   docker compose --profile bot up -d bot  PKScreener's Telegram bot server
+#
+# Secrets come from secrets/.env.dev (mounted read-only).
+# Knobs come from .env (see .env.example).
+# =============================================================================
+
+x-pkscreener-common: &pkscreener-common
+  image: ${PKSCREENER_IMAGE:-pkjmesra/pkscreener}:${PKSCREENER_TAG:-latest}
+  environment:
+    TZ: ${TZ:-Asia/Kolkata}
+    PKSCREENER_DOCKER: "1"
+    GIT_PYTHON_REFRESH: quiet
+    TERM: xterm
+  volumes:
+    # PKScreener reads secrets from ./.env.dev relative to its working dir.
+    - ./secrets/.env.dev:/PKScreener-main/.env.dev:ro
+    # Its tunable filters (min/max price, volume ratio, lookback...).
+    - ./config/pkscreener.ini:/PKScreener-main/pkscreener.ini
+    # Downloaded candles + generated reports. Keeping this on the host means
+    # a scan does not re-download the whole market every time.
+    - ./data/results:/PKScreener-main/results
+    # Where `pkscreenercli.py -d` (download-only mode) puts its pickle instead.
+    - ./data/actions-data-download:/PKScreener-main/actions-data-download
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  # ---------------------------------------------------------------------------
+  # One-shot scan using PKScreener's own scanners.
+  #   docker compose run --rm screener
+  #   docker compose run --rm screener -a Y -e -o X:12:9   (override the menu)
+  # ---------------------------------------------------------------------------
+  screener:
+    <<: *pkscreener-common
+    container_name: pkscreener-scan
+    profiles: ["manual"]
+    stdin_open: true
+    tty: true
+    # -a Y : answer defaults (also accepts PKScreener's terms of service)
+    # -e   : exit after one run instead of looping
+    # -o   : menu path, e.g. X:12:23 = Scanners / Nifty (All Stocks) / Breaking out now
+    command: ["-a", "Y", "-e", "-o", "${SCAN_OPTIONS:-X:12:23}"]
+
+  # ---------------------------------------------------------------------------
+  # PKScreener's interactive Telegram bot server (their "server").
+  # Long-running: answers /commands in Telegram and runs scans on demand.
+  # Needs TOKEN + CHAT_ID in secrets/.env.dev.
+  # ---------------------------------------------------------------------------
+  bot:
+    <<: *pkscreener-common
+    container_name: pkscreener-bot
+    profiles: ["bot"]
+    restart: unless-stopped
+    command: ["--bot", "-a", "Y", "-p"]
+
+  # ---------------------------------------------------------------------------
+  # OUR custom indicator -> Telegram alert.
+  # Edit custom/strategies/my_indicator.py, then:
+  #   docker compose run --rm alerts --once --dry-run   (test, no telegram)
+  #   docker compose up -d alerts                        (run on schedule)
+  # ---------------------------------------------------------------------------
+  alerts:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        PKSCREENER_IMAGE: ${PKSCREENER_IMAGE:-pkjmesra/pkscreener}
+        PKSCREENER_TAG: ${PKSCREENER_TAG:-latest}
+    image: trading/pkscreener-alerts:latest
+    container_name: pkscreener-alerts
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Kolkata}
+      PKSCREENER_DOCKER: "1"
+      GIT_PYTHON_REFRESH: quiet
+      PYTHONPATH: /app
+      PKS_DATA_DIR: /PKScreener-main/results/Data:/PKScreener-main/actions-data-download
+      PKS_UNIVERSE: ${PKS_UNIVERSE:-auto}
+      PKS_INDEX_OPTION: ${PKS_INDEX_OPTION:-12}
+      PKS_LOOKBACK_DAYS: ${PKS_LOOKBACK_DAYS:-250}
+      PKS_MIN_PRICE: ${PKS_MIN_PRICE:-20}
+      PKS_MAX_PRICE: ${PKS_MAX_PRICE:-100000}
+      PKS_MIN_AVG_VOLUME: ${PKS_MIN_AVG_VOLUME:-100000}
+      PKS_MAX_ALERTS: ${PKS_MAX_ALERTS:-40}
+      PKS_RUN_AT: ${PKS_RUN_AT:-15:45}
+      PKS_INTERVAL_MINUTES: ${PKS_INTERVAL_MINUTES:-0}
+      PKS_TRADING_DAYS_ONLY: ${PKS_TRADING_DAYS_ONLY:-1}
+      PKS_DRY_RUN: ${PKS_DRY_RUN:-0}
+      PKS_NOTIFY_EMPTY: ${PKS_NOTIFY_EMPTY:-0}
+      PKS_ATTACH_CSV: ${PKS_ATTACH_CSV:-1}
+      PKS_STRATEGY: ${PKS_STRATEGY:-my_indicator}
+      PKS_LOG_LEVEL: ${PKS_LOG_LEVEL:-INFO}
+      PKS_UNIVERSE_FILE: /app/config/universe.txt
+    volumes:
+      - ./secrets/.env.dev:/PKScreener-main/.env.dev:ro
+      - ./config/pkscreener.ini:/PKScreener-main/pkscreener.ini
+      - ./data/results:/PKScreener-main/results
+      - ./data/actions-data-download:/PKScreener-main/actions-data-download
+      # Live-edit your indicator without rebuilding the image.
+      - ./custom:/app/custom
+      - ./config:/app/config:ro
+    depends_on:
+      data-refresh:
+        condition: service_completed_successfully
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # Populates ./data/results with the latest daily candles for every NSE stock,
+  # using PKScreener's own downloader. `alerts` waits for this to finish once,
+  # and the runner refreshes on its own after that.
+  # ---------------------------------------------------------------------------
+  data-refresh:
+    <<: *pkscreener-common
+    container_name: pkscreener-data
+    command: ["-a", "Y", "-e", "-d"]
+    restart: "no"

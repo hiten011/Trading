@@ -1,0 +1,6 @@
+# One NSE symbol per line (no .NS suffix). Used when PKS_UNIVERSE=file.
+# Lines starting with # and blank lines are ignored.
+#
+# RELIANCE
+# TCS
+# HDFCBANK

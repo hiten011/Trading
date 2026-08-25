@@ -1,0 +1,34 @@
+# ---- Secrets: never commit these ----
+.env
+.env.dev
+secrets/.env.dev
+*.pem
+*.key
+
+# ---- Runtime data / outputs ----
+# The directories themselves are tracked (they are docker bind-mount targets);
+# everything downloaded into them is not.
+data/**
+!data/results/
+!data/results/.gitkeep
+!data/actions-data-download/
+!data/actions-data-download/.gitkeep
+/results/
+*.pkl
+*.log
+logs/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
