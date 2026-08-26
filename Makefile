@@ -43,8 +43,8 @@ bot: ## Start PKScreener's own Telegram bot server
 bot-logs: ## Follow the bot server's logs
 	docker compose --profile bot logs -f bot
 
-test: ## Run the test suite for the custom code
-	python3 -m pytest tests -q
+test: ## Run all tests. Sends a real Telegram message too if secrets/.env.dev is set up
+	python3 -m pytest tests -q -rs
 
 shell: ## Open a shell inside the alerts image
 	docker compose run --rm --no-deps --entrypoint bash alerts

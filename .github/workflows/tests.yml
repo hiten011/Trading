@@ -1,0 +1,61 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Fast, hermetic unit suite (no Docker, no real market data). Includes a
+  # live Telegram check that only fires when TELEGRAM_BOT_TOKEN and
+  # TELEGRAM_CHAT_ID are set as repo secrets -- add those in
+  # Settings -> Secrets and variables -> Actions to get a real message on
+  # every push/PR; without them this step still passes, it just skips two tests.
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+
+      - name: Install test dependencies
+        run: pip install -r requirements-test.txt
+
+      - name: Run the test suite
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: make test
+
+  # Confirms the Dockerfile still builds against upstream's current
+  # pkjmesra/pkscreener:latest, and that the built image actually runs --
+  # a hermetic pytest run can't catch either of those breaking.
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the alerts image
+        run: docker compose build alerts
+
+      - name: Smoke-test the built image
+        run: docker run --rm trading/pkscreener-alerts:latest --list-strategies
+
+      - name: Live Telegram check through the real container
+        if: ${{ secrets.TELEGRAM_BOT_TOKEN != '' }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          docker run --rm -e TELEGRAM_BOT_TOKEN -e TELEGRAM_CHAT_ID \
+            trading/pkscreener-alerts:latest --check-telegram

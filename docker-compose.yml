@@ -16,10 +16,22 @@ x-pkscreener-common: &pkscreener-common
     PKSCREENER_DOCKER: "1"
     GIT_PYTHON_REFRESH: quiet
     TERM: xterm
+    # PKScreener gates first-run usage behind an interactive OTP login
+    # (PKUserRegistration) unless this is set -- it's the same env var
+    # upstream's own GitHub Actions workflows use to run headlessly, and it
+    # also unblocks their internal Telegram delivery and cache-writing paths
+    # that are otherwise conditional on "am I a human at a keyboard". None of
+    # our containers have a human at a keyboard, so this is always on.
+    RUNNER: GitHub_Actions
   volumes:
     # PKScreener reads secrets from ./.env.dev relative to its working dir.
     - ./secrets/.env.dev:/PKScreener-main/.env.dev:ro
     # Its tunable filters (min/max price, volume ratio, lookback...).
+    # Read-write: PKScreener writes its own state back into this file
+    # (appversion, tosaccepted) after a run. That's expected -- harmless
+    # drift, not something to chase down. Mounting it read-only instead
+    # makes PKScreener's own config-repair path (IOError -> sys.exit(1))
+    # a hard failure, which is worse.
     - ./config/pkscreener.ini:/PKScreener-main/pkscreener.ini
     # Downloaded candles + generated reports. Keeping this on the host means
     # a scan does not re-download the whole market every time.
@@ -81,6 +93,9 @@ services:
       TZ: ${TZ:-Asia/Kolkata}
       PKSCREENER_DOCKER: "1"
       GIT_PYTHON_REFRESH: quiet
+      # See the comment on RUNNER in x-pkscreener-common -- applies here too
+      # since custom.universe can fall back to PKScreener's own fetcher.
+      RUNNER: GitHub_Actions
       PYTHONPATH: /app
       PKS_DATA_DIR: /PKScreener-main/results/Data:/PKScreener-main/actions-data-download
       PKS_UNIVERSE: ${PKS_UNIVERSE:-auto}

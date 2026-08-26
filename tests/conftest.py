@@ -8,10 +8,23 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    """Keep a developer's real .env.dev / PKS_* vars out of the tests."""
+    """Keep a developer's real .env.dev / PKS_* vars out of the tests.
+
+    Blocks both routes a real secret could leak in: environment variables,
+    and the actual secrets/.env.dev file sitting in the repo (which is real
+    once anyone has followed the setup instructions). tests/test_live_telegram.py
+    is the one deliberate exception -- it overrides this fixture locally
+    because it specifically wants your real credentials.
+    """
     for key in list(os.environ):
-        if key.startswith("PKS_") or key in ("TOKEN", "CHAT_ID", "chat_idADMIN"):
+        if key.startswith("PKS_") or key in (
+            "TOKEN", "CHAT_ID", "chat_idADMIN", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
+        ):
             monkeypatch.delenv(key, raising=False)
+
+    import custom.config as config
+
+    monkeypatch.setattr(config, "ENV_DEV_CANDIDATES", ())
 
 
 @pytest.fixture

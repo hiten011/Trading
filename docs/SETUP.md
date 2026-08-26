@@ -222,13 +222,70 @@ Then `docker compose up -d alerts` to apply.
 
 ## Running the tests
 
-The custom code has a test suite that needs no Docker and no market data:
-
 ```bash
-pip install pandas numpy pytest requests python-dotenv tabulate
+pip install -r requirements-test.txt
 make test
 ```
 
-It covers the indicator maths (RSI is checked against Wilder's published
-worked example), the cache reader, the Telegram transport, the scheduler, and a
-full scan end to end against a synthetic market.
+That's the whole suite: indicator maths (RSI checked against Wilder's
+published worked example), the cache reader across every shape PKScreener
+writes, the Telegram transport, the scheduler, a full scan end to end against
+a synthetic market -- **and, if `secrets/.env.dev` is filled in, two tests that
+call the real Telegram API and send you a real message.** That's the live
+proof the bot token and chat id actually work, not just that our code would
+format a message correctly. No `secrets/.env.dev` yet? Those two tests skip
+(not fail) -- everything else still runs, no Docker or market data needed.
+
+```
+115 passed, 2 skipped   # no secrets/.env.dev yet
+117 passed              # secrets/.env.dev filled in -- check your Telegram
+```
+
+Run just the live check:
+
+```bash
+pytest tests/test_live_telegram.py -v -rs
+```
+
+### What isn't covered by the fast suite
+
+- **The actual Docker build.** `docker compose build alerts` pulls upstream's
+  current image and layers ours on top -- a hermetic pytest run can't catch a
+  break there. Covered separately, see CI below.
+- **PKScreener's own CLI running non-interactively.** Its first-run OTP login
+  gate (see the `RUNNER` comment in `docker-compose.yml`) is upstream behavior
+  triggered by *how their image is invoked*, not something a Python unit test
+  meaningfully exercises. `make data` / `make scan` running to completion
+  without hanging on a prompt **is** that check, in practice, every time you
+  run them.
+- **Parsing a real (not synthetic) PKScreener cache file.** `tests/test_data.py`
+  covers every shape their source code is known to write (`DataFrame`,
+  `df.to_dict("split")`, a column-keyed dict), but that's read from their
+  source, not proven against a live download from inside every environment.
+  `make data && make dry-run` is the live version of this check.
+
+## Continuous integration
+
+`.github/workflows/tests.yml` runs on every push and pull request:
+
+- **`unit-tests`** -- installs `requirements-test.txt`, runs `make test`.
+- **`docker-build`** -- runs `docker compose build alerts`, then
+  `docker run trading/pkscreener-alerts:latest --list-strategies` as a smoke
+  check that the built image actually starts.
+
+To get a real Telegram message on every push (both jobs will send one, so two
+per push/PR), add two repository secrets --
+**Settings → Secrets and variables → Actions → New repository secret**:
+
+| Secret name | Value |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Same value as `TOKEN` in your local `secrets/.env.dev` |
+| `TELEGRAM_CHAT_ID` | Same value as `chat_idADMIN` in your local `secrets/.env.dev` |
+
+These are separate from the local file on purpose -- `secrets/.env.dev` never
+leaves your machine (it's git-ignored), so CI needs its own copy of the same
+two values, under the names our code already recognizes as environment-variable
+overrides. Without them, both jobs still pass; the live-message tests/step
+just skip, which also means an outside contributor's pull request (which never
+gets access to your secrets) builds and tests cleanly without ever seeing your
+bot token.

@@ -168,9 +168,35 @@ custom/
   notify.py                   Telegram transport
   report.py                   formats the alert table
 
-tests/                      115 tests: run with `make test`
+tests/                      117 tests: run with `make test`
+.github/workflows/tests.yml CI: runs the tests + a Docker build check on every push/PR
 data/                       downloaded candles (git-ignored)
 ```
+
+---
+
+## Testing
+
+```bash
+pip install -r requirements-test.txt
+make test
+```
+
+Runs the full suite, hermetic by default (no Docker, no network, no market
+data needed). Two of those tests are a deliberate exception: if
+`secrets/.env.dev` is filled in, `make test` also sends a real Telegram
+message through the real Bot API, so you get live proof it's actually wired up
+correctly — not just that the code would format a message right. No secrets
+yet? Those two skip cleanly; everything else still runs.
+
+This also runs automatically in GitHub Actions on every push and pull
+request (`.github/workflows/tests.yml`), plus a second job that rebuilds the
+Docker image to catch anything a pure Python test can't. To get a live
+Telegram message on CI runs too, add two repo secrets under **Settings →
+Secrets and variables → Actions**: `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_CHAT_ID`, same values as `TOKEN`/`chat_idADMIN` in your local
+`secrets/.env.dev`. Full details, including exactly what is and isn't
+covered, in [docs/SETUP.md](docs/SETUP.md#running-the-tests).
 
 ---
 
