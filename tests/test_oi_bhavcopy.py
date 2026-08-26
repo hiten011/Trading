@@ -213,3 +213,71 @@ def test_iter_range_skips_weekends_without_asking(source):
     sessions = list(src.iter_range(date(2026, 8, 14), date(2026, 8, 16), progress_every=0))
     assert len(sessions) == 1
     assert len(src._session.requested) == 1
+
+
+def test_indices_are_identified_from_the_exchange_instrument_type(source):
+    """A hardcoded name list silently misses newly listed indices.
+
+    NIFTYFPI trades 366 option contracts a session and is not a name anyone
+    thinks to add to such a list, so OI_EXCLUDE_INDICES would have let it
+    through. The exchange already tags index options as IDO; trust that.
+    """
+    payload = bhavcopy_zip(
+        [
+            {"FinInstrmTp": "IDO", "TckrSymb": "NIFTYFPI", "StrkPric": 100.0},
+            {"FinInstrmTp": "STO", "TckrSymb": "RELIANCE", "StrkPric": 100.0},
+        ],
+        trade_date=TODAY,
+    )
+    contexts = source().parse(payload, day=TODAY).contexts
+    assert contexts["NIFTYFPI"].is_index
+    assert not contexts["RELIANCE"].is_index
+
+
+def test_a_holiday_marker_is_only_written_for_a_past_date(source, monkeypatch):
+    """Today's file is merely late, not absent.
+
+    NSE publishes after ~18:00 IST. Caching a 404 for today as permanent means
+    a run at 14:00 poisons the cache, and the 19:00 run keeps skipping the very
+    session it was waiting for -- so the scanner would stay a day behind until
+    someone cleared the cache by hand.
+    """
+    import os
+
+    from datetime import date as real_date
+
+    src = source([FakeResponse(404), FakeResponse(404)])
+    monkeypatch.setattr(type(src), "_today_ist", staticmethod(lambda: real_date(2026, 8, 26)))
+
+    assert src.fetch_raw(real_date(2026, 8, 26)) is None
+    assert not os.path.isfile(src._missing_marker(real_date(2026, 8, 26)))
+    # ...so a later run the same day asks again rather than trusting the miss.
+    assert src.fetch_raw(real_date(2026, 8, 26)) is None
+    assert len(src._session.requested) == 2
+
+
+def test_todays_file_is_picked_up_once_nse_publishes_it(source, monkeypatch):
+    from datetime import date as real_date
+
+    payload = bhavcopy_zip([{"StrkPric": 100.0}], trade_date=real_date(2026, 8, 26))
+    src = source([FakeResponse(404), FakeResponse(200, payload)])
+    monkeypatch.setattr(type(src), "_today_ist", staticmethod(lambda: real_date(2026, 8, 26)))
+
+    assert src.fetch_raw(real_date(2026, 8, 26)) is None      # 14:00, not out yet
+    assert src.fetch_raw(real_date(2026, 8, 26)) == payload   # 19:00, published
+
+
+def test_a_past_holiday_is_still_remembered(source, monkeypatch):
+    """The original behaviour must survive: a backtest walking the calendar
+    must not re-request the same holiday on every run."""
+    import os
+
+    from datetime import date as real_date
+
+    src = source([FakeResponse(404)])
+    monkeypatch.setattr(type(src), "_today_ist", staticmethod(lambda: real_date(2026, 8, 26)))
+
+    assert src.fetch_raw(real_date(2026, 8, 15)) is None      # Independence Day
+    assert os.path.isfile(src._missing_marker(real_date(2026, 8, 15)))
+    assert src.fetch_raw(real_date(2026, 8, 15)) is None
+    assert len(src._session.requested) == 1

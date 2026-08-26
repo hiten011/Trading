@@ -34,7 +34,7 @@ import time
 import zipfile
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Sequence
 
 import pandas as pd
@@ -154,6 +154,27 @@ class BhavcopySource:
         does not re-request the same 404 on every run."""
         return os.path.join(self.cache_dir, f"fo_{day:%Y%m%d}.missing")
 
+    @staticmethod
+    def _today_ist() -> date:
+        """Today in Indian market time, whatever the host's clock is set to."""
+        try:
+            from zoneinfo import ZoneInfo
+
+            return datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        except Exception:  # noqa: BLE001 - fall back to the local clock
+            return date.today()
+
+    def _may_still_be_published(self, day: date) -> bool:
+        """Whether a 404 for ``day`` could become a real file later.
+
+        NSE publishes the session's file after the close, around 18:00-19:00
+        IST. A 404 for a *past* date means a holiday -- permanent, worth
+        remembering. A 404 for today means "not yet", and caching that as
+        permanent would make every later run that day keep skipping the
+        session it was waiting for.
+        """
+        return day >= self._today_ist()
+
     def fetch_raw(self, day: date, force: bool = False) -> Optional[bytes]:
         """Return the zip bytes for ``day``, or None if the session had no file."""
         cache_path = self._cache_path(day)
@@ -177,9 +198,15 @@ class BhavcopySource:
                 continue
 
             if response.status_code == 404:
-                LOGGER.debug("No bhavcopy for %s (holiday or not published yet)", day)
-                os.makedirs(self.cache_dir, exist_ok=True)
-                open(self._missing_marker(day), "w").close()
+                if self._may_still_be_published(day):
+                    LOGGER.info(
+                        "No bhavcopy for %s yet -- NSE publishes after ~18:00 IST. "
+                        "Scanning the previous session instead.", day,
+                    )
+                else:
+                    LOGGER.debug("No bhavcopy for %s (holiday)", day)
+                    os.makedirs(self.cache_dir, exist_ok=True)
+                    open(self._missing_marker(day), "w").close()
                 return None
             if response.ok and response.content[:2] == b"PK":
                 os.makedirs(self.cache_dir, exist_ok=True)
@@ -312,6 +339,13 @@ class BhavcopySource:
         # so a stray zero on an untraded far contract cannot win.
         spot = options.groupby("TckrSymb")["UndrlygPric"].max()
 
+        # The exchange already says which underlyings are indices, via the
+        # instrument type (IDO = index option). Trusting that beats a name
+        # list, which quietly misses anything newly listed.
+        index_symbols = set(
+            options.loc[options["FinInstrmTp"] == INDEX_OPTION, "TckrSymb"].unique()
+        )
+
         # Futures: use the nearest expiry, which is the liquid one.
         futures_by_symbol: Dict[str, pd.Series] = {}
         if not futures.empty:
@@ -325,6 +359,7 @@ class BhavcopySource:
                 symbol=symbol,
                 trade_date=trade_date,
                 spot=float(spot.get(symbol, 0.0) or 0.0),
+                is_index=symbol in index_symbols,
                 total_call_oi=float(call_oi.get(symbol, 0.0) or 0.0),
                 total_put_oi=float(put_oi.get(symbol, 0.0) or 0.0),
                 prev_total_call_oi=float(prev_call_oi.get(symbol, 0.0) or 0.0),

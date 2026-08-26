@@ -382,3 +382,18 @@ def test_history_skips_contracts_that_had_no_prior_position():
     history = build_pct_history([session_from_rows([new, established], trade_date=TODAY)])
     assert new.key not in history
     assert history[established.key] == [pytest.approx(25.0)]
+
+
+def test_index_exclusion_uses_the_exchange_classification_not_a_name_list(settings):
+    """An index the hardcoded list has never heard of must still be excluded."""
+    settings = replace(settings, exclude_indices=True)
+    row = option_row(symbol="NIFTYFPI", oi_units=10_000_000, delta_oi_units=9_500_000)
+    contexts = {"NIFTYFPI": underlying_context(symbol="NIFTYFPI", is_index=True)}
+    assert scan_one(row, settings, contexts=contexts).rejections["index"] == 1
+
+
+def test_a_stock_is_not_excluded_by_the_index_filter(settings):
+    settings = replace(settings, exclude_indices=True)
+    row = option_row(symbol="RELIANCE", oi_units=10_000_000, delta_oi_units=9_500_000)
+    contexts = {"RELIANCE": underlying_context(symbol="RELIANCE", is_index=False)}
+    assert len(scan_one(row, settings, contexts=contexts).alerts) == 1
