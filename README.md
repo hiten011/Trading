@@ -123,6 +123,22 @@ Keeping several strategies side by side: add more files to
 `custom/strategies/`, then switch with `PKS_STRATEGY=<filename>` in `.env`.
 `docker compose run --rm --no-deps alerts --list-strategies` shows what is there.
 
+**One strategy runs per container.** `PKS_STRATEGY` names a single file —
+adding more files does not make one scan evaluate all of them. To run several
+at once, start one `alerts` container per strategy (each with its own
+`PKS_STRATEGY`), or ask and multi-strategy support can be added to the runner.
+
+**New strategy files are tested automatically.** `tests/test_strategy_contract.py`
+discovers everything in `custom/strategies/` at collection time and checks each
+one against the same contract: it loads, it survives awkward market data (flat
+stocks, straight lines, one-bar history, NaNs, zero volume, penny prices), it
+returns a `Signal` or `None`, its numbers are finite, it does not mutate the
+caller's DataFrame, and it is deterministic. Drop in `my_new_thing.py` and CI
+covers it on the next push with no edit to the test file. That matters because
+`custom/runner.py` deliberately swallows per-symbol exceptions so one bad stock
+cannot kill a whole scan — which means a broken indicator looks exactly like an
+indicator that found nothing.
+
 Your edits are live-mounted — no rebuild needed unless you add a pip package
 (then put it in `docker/requirements-custom.txt` and `make build`).
 
@@ -219,7 +235,7 @@ custom/
   notify.py                   Telegram transport
   report.py                   formats the alert table
 
-tests/                      269 tests: run with `make test`
+tests/                      276 tests: run with `make test`
 .github/workflows/tests.yml CI: runs the tests + a Docker build check on every push/PR
 data/                       downloaded candles (git-ignored)
 ```

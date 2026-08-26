@@ -278,51 +278,182 @@ The ones most worth touching:
 | `OI_MAX_ALERTS` / `OI_MAX_PER_SYMBOL` | `25` / `3` | Message size caps |
 | `OI_RUN_AT` | `18:30` | IST. Earlier than ~18:00 scans the previous session |
 
-### A note on scan frequency
+### Why it scans once a day, not every minute
 
-The bhavcopy updates once a session, so scanning more often than once a day
-cannot produce new information. `OI_RUN_AT=18:30` is the right setting.
-`OI_INTERVAL_MINUTES` exists for a future intraday source and is off by
-default — turning it on today just re-reads the same file.
+The natural expectation is that a scanner should poll constantly. Here it
+should not, for a reason that is about the data rather than the code:
+
+**The bhavcopy is published once per session.** It is a single archive file
+NSE writes after the close. Polling it every minute re-downloads a byte-identical
+file 375 times and produces exactly one scan's worth of information. There is
+no intraday version of this file to poll.
+
+So the once-a-day schedule is not a limitation of the scanner — it is the true
+update rate of the only free, complete, unblocked source of NSE F&O open
+interest. Scanning more often cannot manufacture data that was never published.
+
+**What genuinely intraday OI would require.** Two things, and the first is the
+blocker:
+
+1. **A feed that publishes OI during the session.** NSE's own option-chain API
+   does, but it is throttled to an empty response for non-residential IPs (see
+   [Where the data comes from](#where-the-data-comes-from)). The practical
+   route is a broker API — Kite Connect, Upstox, Angel One or Dhan — which
+   needs a trading account and usually a paid API tier. `custom/oi/sources/`
+   already defines the interface; a broker adapter drops in beside
+   `bhavcopy.py` and the scanner does not change.
+2. **Different thresholds.** This matters more than it sounds. A 1000%
+   day-over-day OI jump is already rare — about 7 contracts a session out of
+   ~35,000. Against a *5-minute* baseline the same 1000% is a much smaller
+   real event, and most of what clears it will be contracts coming off a tiny
+   base early in the session. The percentage bands, the OI floors and the
+   cooldown would all need re-tuning against intraday data, and re-backtesting,
+   before intraday alerts meant anything. Reusing today's numbers on a 5-minute
+   bar would mostly generate noise.
+
+Also worth knowing: open interest is not a tick-by-tick quantity even on a
+live feed. It is a position count that exchanges disseminate on an interval,
+so even with a broker feed the useful scan cadence is minutes, not seconds.
+
+`OI_INTERVAL_MINUTES` exists for exactly this future and is off by default.
+Turning it on against the bhavcopy source today just re-reads the same file —
+the de-duplication would suppress every repeat, so you would get no extra
+alerts, only extra requests to NSE.
+
+If you have a broker account, say which one and this can be wired up; the
+adapter is a contained piece of work, but the re-tuning and re-backtesting
+above is the part that decides whether it is worth anything.
 
 ---
 
 ## Deployment
 
+### Measured resource use
+
+Taken from a real full-universe scan on this codebase, not estimated:
+
+| | |
+|---|---|
+| Peak memory, full scan | **156 MB** (33,906 contracts, 214 underlyings) |
+| Wall time per scan | **~1.3 s** from cache, ~5 s including the download |
+| Bhavcopy per session | 1.1 MB |
+| Full 2-year history | 607 MB (only needed for backtesting) |
+| Docker image | ~6.5 GB on disk |
+
+The image is large because it inherits `pkjmesra/pkscreener` for the equity
+screener. The OI scanner itself needs only `pandas` and `requests` — a
+purpose-built image would be roughly 200 MB and would make both a `t4g.nano`
+and AWS Lambda comfortable. Worth doing if this ends up being the only thing
+you deploy.
+
 ### Which AWS service
 
-**ECS Fargate with a scheduled task, or the equivalent EventBridge-triggered
-run, is the right fit** — and honestly, so is the cheapest `t4g.nano` EC2 box
-you can rent.
-
-The reasoning: the scan runs **once a day**, takes **under 30 seconds**, and
-needs a few hundred MB of persistent cache. That is a scheduled job, not a
-service.
+The scan runs **once a day** and takes **seconds**. That is a scheduled job,
+not a service.
 
 | Option | Verdict |
 |---|---|
-| **Lambda + EventBridge** | Cheapest on paper, but the image is 6.5 GB — far past Lambda's 10 GB container limit in practice once layers are counted, and the bhavcopy cache would have to move to EFS or S3. Only worth it if you rebuild a slim image (this scanner needs only `pandas` + `requests`, not the PKScreener base). Then it is genuinely the best option. |
-| **ECS Fargate scheduled task** | Best fit as-is. Runs the existing image unchanged, EventBridge fires it at 18:30 IST, you pay for ~30 seconds a day. Needs an EFS mount (or S3) for `data/` so the cache and de-dup state survive. |
-| **EC2 `t4g.nano`** | Simplest by a distance. `docker compose up -d oi-scanner` and walk away; the container's own scheduler handles timing and the cache is just a local volume. ~$3/month. Recommended unless you specifically want serverless. |
+| **EC2 `t4g.small`** | Simplest by a distance. `docker compose up -d oi-scanner` and walk away. The container schedules itself, the cache is a local volume. **Recommended.** |
+| **ECS Fargate scheduled task** | The managed equivalent. Runs the existing image unchanged with EventBridge firing it daily; needs EFS (or S3) for `data/` so the cache and de-dup state survive between runs. Worth it if you already run ECS. |
+| **Lambda + EventBridge** | Cheapest in principle, but not with a 6.5 GB image — past Lambda's 10 GB limit once layers are counted, and `data/` would have to move to EFS. Viable only after building the slim image mentioned above. |
 
-The container is already restart-safe: bhavcopy files, the de-dup database and
-report CSVs all live under the mounted `./data`, so a restart re-downloads
-nothing and replays no alerts.
+Upstream's base image is multi-arch (`linux/amd64` and `linux/arm64`), so
+Graviton instances work and are the cheaper choice.
 
-### On an EC2 box or any always-on server
+### Step by step on EC2
+
+**1. Launch the instance**
+
+- AMI: Amazon Linux 2023 (arm64)
+- Type: `t4g.small` (2 GB). `t4g.micro` (1 GB) is fine too — the scan peaks at
+  156 MB, and the rest is Docker's own overhead. `t4g.nano` (512 MB) will run
+  the scan but leaves no room for the daemon plus a backtest.
+- Storage: **20 GB gp3**. The default 8 GB will not hold a 6.5 GB image.
+- Security group: outbound HTTPS only. **No inbound ports are needed** — the
+  scanner makes outbound calls to NSE and Telegram and listens for nothing.
+
+**2. Install Docker and enable it at boot**
 
 ```bash
-git clone <this repo> && cd Trading
-make oi-build
-make oi-warm-cache START=2025-01-01      # optional; the scanner fetches what it needs
-docker compose run --rm oi-scanner --check-telegram
-make oi-up
-make oi-logs
+sudo dnf update -y
+sudo dnf install -y docker git
+sudo systemctl enable --now docker
+sudo usermod -aG docker ec2-user
+newgrp docker            # or log out and back in
 ```
 
-Add `--restart unless-stopped` behaviour is already in the compose file, so
-enable Docker at boot (`sudo systemctl enable docker`) and the scanner comes
-back after a reboot on its own.
+`systemctl enable` is the part that matters: with `restart: unless-stopped`
+already set in the compose file, the scanner comes back on its own after a
+reboot.
+
+**3. Get the code and build**
+
+```bash
+git clone https://github.com/hiten011/Trading.git
+cd Trading
+docker compose build oi-scanner      # ~5-10 min on a t4g.small
+```
+
+**4. Confirm Telegram works before trusting the schedule**
+
+```bash
+docker compose run --rm oi-scanner --check-telegram
+```
+
+That sends a real message. If it does not arrive, open the bot in Telegram and
+send `/start` — Telegram will not let a bot message you first.
+
+**5. Rehearse a scan**
+
+```bash
+docker compose run --rm oi-scanner --once --dry-run
+```
+
+Prints what it would send, touches no Telegram and writes no de-dup state, so
+it cannot silence the real alert that follows.
+
+**6. Start it**
+
+```bash
+docker compose up -d oi-scanner
+docker compose logs -f oi-scanner
+```
+
+You should see `Scheduled for 18:30 on trading days (Asia/Kolkata)` and then
+`Next scan at ... (in N min)`.
+
+**7. Optional — warm the backtest cache**
+
+Only if you intend to run backtests on the box. It is 607 MB and the live
+scanner does not need it.
+
+```bash
+docker compose run --rm oi-scanner --warm-cache --start 2024-07-01
+```
+
+### Timezone
+
+The container is set to `Asia/Kolkata` regardless of the host's clock, so
+`OI_RUN_AT=18:30` means 18:30 IST even on a UTC instance. NSE publishes the
+F&O bhavcopy around 18:00-19:00 IST; a run before that scans the previous
+session, which is harmless but a session behind.
+
+### Keeping it healthy
+
+```bash
+docker compose logs --tail 100 oi-scanner    # what it has been doing
+docker compose restart oi-scanner            # after an .env change
+docker compose pull && docker compose build oi-scanner && docker compose up -d oi-scanner
+```
+
+State that survives restarts, all under the mounted `./data`:
+
+- `data/oi_cache/` — downloaded bhavcopy files, so a restart re-downloads nothing
+- `data/oi_state.sqlite` — de-dup state, so a restart replays no alerts
+- `data/oi_reports/` — the CSV attached to each alert
+
+Container logs are capped at 3 x 10 MB by the compose file, so they cannot
+fill the disk.
 
 ### Behind a TLS-inspecting proxy
 
