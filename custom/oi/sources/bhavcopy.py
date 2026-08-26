@@ -372,8 +372,19 @@ class BhavcopySource:
         return contexts
 
     # -- public API --------------------------------------------------------
-    def load(self, day: date, force: bool = False) -> Optional[SessionData]:
-        """Session data for ``day``, or None when the market was shut."""
+    def load(
+        self, day: date, force: bool = False, symbols: Optional[Sequence[str]] = None
+    ) -> Optional[SessionData]:
+        """Session data for ``day``, or None when the market was shut.
+
+        ``symbols`` is accepted only for interface parity with
+        :class:`~custom.oi.sources.nselive.NseLiveSource`, where restricting
+        the fetch to a few names actually saves network round trips. Here one
+        file already holds every symbol regardless, so pre-filtering the
+        fetch would cost a rewrite of the caching logic for no benefit --
+        callers wanting a subset filter the returned :class:`SessionData`
+        instead, same as before this parameter existed.
+        """
         if not force and day in self._memo:
             self._memo.move_to_end(day)
             return self._memo[day]
@@ -387,7 +398,12 @@ class BhavcopySource:
             self._memo.popitem(last=False)
         return session
 
-    def latest(self, as_of: Optional[date] = None, max_lookback: int = 10) -> SessionData:
+    def latest(
+        self,
+        as_of: Optional[date] = None,
+        max_lookback: int = 10,
+        symbols: Optional[Sequence[str]] = None,  # unused; see load()
+    ) -> SessionData:
         """The most recent published session at or before ``as_of``.
 
         NSE publishes the file after the close, so on a trading day before

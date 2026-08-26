@@ -48,16 +48,29 @@ Nothing here places orders. It only sends messages.
 
 ## Where the data comes from
 
-NSE has no free official real-time API, and the option-chain endpoint on their
-website is actively throttled — from this environment and from most
-cloud/datacentre hosts it returns **HTTP 200 with an empty body** (`{}`), with
-a warmed cookie jar, browser `User-Agent`, correct `Referer` and
-`Accept-Language`. Other NSE JSON endpoints on the same host and jar answer
-normally at the same moment, so it is that endpoint specifically, not a
-network or session problem.
+NSE has no free official real-time API. Its option-chain website endpoint
+(`/api/option-chain-v3`) was for a while wrongly believed unusable from this
+environment — it answers **HTTP 200 with an empty body** (`{}`) unless the
+request carries an explicit `expiry` query parameter, which an earlier
+version of this scanner never sent. Reading a parameter-validation response
+as an IP block was a mistake, corrected once a third-party script (added
+under `scripts/nse_oi_buildup_scanner.py`) demonstrably worked from this same
+network and the difference was tracked down. Supplying the parameter (backed
+by a preliminary call to `/api/option-chain-contract-info`, which is what
+resolves it) returns real, current data — see
+[`custom/oi/sources/nselive.py`](../custom/oi/sources/nselive.py) for the
+fixed adapter and the two independent confirmations in its docstring.
+
+That source is still not the default, for a different reason than being
+blocked: it is a **live snapshot with no historical archive**, so it cannot
+replay the past the way bhavcopy can, and it costs one HTTP round trip per
+symbol — a handful of symbols answers in seconds, but the full ~210-name F&O
+universe takes several minutes, which matters if you want frequent polling.
+The backtest below uses bhavcopy exclusively for that reason, not because the
+live endpoint doesn't work.
 
 The scanner therefore runs on **NSE's official end-of-day F&O bhavcopy
-archive** (UDiFF format):
+archive** (UDiFF format) by default:
 
 ```
 https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_YYYYMMDD_F_0000.csv.zip
@@ -76,15 +89,21 @@ Each row carries open interest, the day's change in open interest, traded
 volume, the option's own open/close/previous close, the underlying's price and
 the lot size — everything the scanner needs, with no second lookup for spot.
 
-**One session is the finest resolution this gives you.** That happens to match
-what the Pine original computed on a daily chart (`open_interest` vs
-`open_interest[1]`), so nothing is lost against the thing being replaced. For
-genuine *intraday* OI you need a broker feed — Kite Connect, Upstox, Angel
-One or Dhan — all of which need an account and most of which need a paid API
-tier. `custom/oi/sources/nselive.py` implements the website API behind the same
-interface and will work from an IP NSE does not throttle (a home or office ISP
-in India, typically); a broker adapter drops in beside it without the scanner
-changing, since both produce the same `SessionData` shape.
+**One session is the finest resolution the *default* source gives you.** That
+happens to match what the Pine original computed on a daily chart
+(`open_interest` vs `open_interest[1]`), so nothing is lost against the thing
+being replaced. Genuine *intraday* OI is available today via
+`custom/oi/sources/nselive.py` (no broker account needed, confirmed working
+from a datacenter IP — see above), used directly or through
+`OI_SOURCE=nselive`; a broker feed — Kite Connect, Upstox, Angel One or Dhan —
+remains the more production-robust option since this is still an undocumented
+website API NSE could change without notice, and a broker adapter drops in
+beside it without the scanner changing, since both produce the same
+`SessionData` shape. What intraday use genuinely still needs, independent of
+which feed supplies it, is its own backtest at whatever cadence it runs —
+1000% day-over-day is roughly 7 contracts out of 35,000 in the bhavcopy data;
+the same threshold against a much shorter baseline is a different, untested
+claim (see [Why it scans once a day](#why-it-scans-once-a-day-not-every-minute)).
 
 ### Two format facts that were verified, not assumed
 
@@ -300,41 +319,41 @@ NSE writes after the close. Polling it every minute re-downloads a byte-identica
 file 375 times and produces exactly one scan's worth of information. There is
 no intraday version of this file to poll.
 
-So the once-a-day schedule is not a limitation of the scanner — it is the true
-update rate of the only free, complete, unblocked source of NSE F&O open
-interest. Scanning more often cannot manufacture data that was never published.
+So a scan against **bhavcopy** cannot run more than once a day and gain
+anything: that source's update rate is once a session, full stop. That part
+has not changed.
 
-**What genuinely intraday OI would require.** Two things, and the first is the
-blocker:
+**A feed that updates during the session does now exist and work** —
+`custom/oi/sources/nselive.py`, no broker account needed (see
+[Where the data comes from](#where-the-data-comes-from)) — so the real
+question is not "is intraday possible" but "is intraday validated", and the
+answer is no, for a reason that has nothing to do with data availability:
 
-1. **A feed that publishes OI during the session.** NSE's own option-chain API
-   does, but it is throttled to an empty response for non-residential IPs (see
-   [Where the data comes from](#where-the-data-comes-from)). The practical
-   route is a broker API — Kite Connect, Upstox, Angel One or Dhan — which
-   needs a trading account and usually a paid API tier. `custom/oi/sources/`
-   already defines the interface; a broker adapter drops in beside
-   `bhavcopy.py` and the scanner does not change.
-2. **Different thresholds.** This matters more than it sounds. A 1000%
-   day-over-day OI jump is already rare — about 7 contracts a session out of
-   ~35,000. Against a *5-minute* baseline the same 1000% is a much smaller
-   real event, and most of what clears it will be contracts coming off a tiny
-   base early in the session. The percentage bands, the OI floors and the
-   cooldown would all need re-tuning against intraday data, and re-backtesting,
-   before intraday alerts meant anything. Reusing today's numbers on a 5-minute
-   bar would mostly generate noise.
+**Thresholds tuned for one cadence do not transfer to another.** A 1000%
+day-over-day OI jump is already rare — about 7 contracts a session out of
+~35,000, tuned and backtested at that resolution. Against a *5-minute*
+baseline the same 1000% is a much smaller real event, and most of what clears
+it would be contracts coming off a tiny base early in the session. The
+percentage bands, the OI floors and the cooldown would all need re-tuning
+against intraday data, and re-backtesting at that cadence specifically —
+the 533-session backtest in this document says nothing about whether a
+5-minute version of the same rule means anything, because it never ran one.
+Wiring up the live source without doing that would produce alerts with no
+more evidence behind them than the original Pine script had.
 
 Also worth knowing: open interest is not a tick-by-tick quantity even on a
-live feed. It is a position count that exchanges disseminate on an interval,
-so even with a broker feed the useful scan cadence is minutes, not seconds.
+live feed. It is a position count NSE disseminates on an interval, and each
+symbol costs its own HTTP round trip against `option-chain-v3` — polling the
+full ~210-name universe takes minutes, not seconds, which bounds how tight a
+"continuous" schedule can honestly be regardless of the threshold question.
 
-`OI_INTERVAL_MINUTES` exists for exactly this future and is off by default.
-Turning it on against the bhavcopy source today just re-reads the same file —
-the de-duplication would suppress every repeat, so you would get no extra
-alerts, only extra requests to NSE.
-
-If you have a broker account, say which one and this can be wired up; the
-adapter is a contained piece of work, but the re-tuning and re-backtesting
-above is the part that decides whether it is worth anything.
+`OI_SOURCE=nselive` runs today under `--once` or `--schedule` alike; nothing
+in the plumbing stops it. Under `--schedule` you would want
+`OI_INTERVAL_MINUTES` rather than the default `OI_RUN_AT`, since a single
+daily time throws away exactly the intraday resolution the live source
+exists to provide. What is missing is the validation step, not the plumbing:
+re-tune the thresholds against intraday snapshots and backtest that
+specifically before trusting alerts fired at that cadence.
 
 ---
 
@@ -483,6 +502,58 @@ Do not disable certificate verification instead.
 
 ---
 
+## The standalone jugaad-data script
+
+`scripts/nse_oi_buildup_scanner.py` is a second, independent implementation of
+the same underlying idea, using the third-party `jugaad-data` library against
+NSE's live option-chain API instead of bhavcopy. Added, run, and tested on
+request; kept as-is rather than folded into `custom/oi/`, since the two solve
+the problem differently enough that merging them would mean throwing one
+approach away.
+
+**It works** — confirmed with real, current NSE data, cross-checked exactly
+against the bhavcopy archive's own numbers for the same contract. Reviewed
+before running (no `eval`/`exec`/`subprocess`, no unexpected outbound hosts,
+its one on-disk cache is self-written and self-read, not a foundation for
+smuggling anything in).
+
+Relative to `custom/oi/`, it is deliberately simpler: one flat threshold on
+NSE's own `pchangeinOpenInterest` field, no absolute OI/volume/notional
+floors, no near-the-money filter, no buildup/bias classification, no cooldown
+or de-duplication, no backtest. Useful for an ad hoc check; the production
+scanner in this repo is `custom/oi/`, run via `make oi-*`.
+
+Running it live surfaced two real, separate findings, both worth knowing
+regardless of which scanner you use:
+
+1. **NSE's `option-chain-v3` endpoint needed an explicit `expiry` parameter,
+   not IP-based throttling.** This project's own `custom/oi/sources/nselive.py`
+   had wrongly concluded the endpoint was blocked for non-residential IPs,
+   based on calling it without that parameter. Seeing the jugaad-data script
+   succeed under the same network conditions is what prompted tracking the
+   real cause down and fixing it — see
+   [Where the data comes from](#where-the-data-comes-from). Two further bugs
+   surfaced during that fix, also corrected: the response's expiry field
+   parses under a different key and date format than assumed (would have
+   silently dropped every row even once data started arriving), and symbols
+   containing `&` — **M&M (Mahindra & Mahindra) and GVT&D, both genuinely
+   liquid F&O names** — were corrupted by unescaped query-string
+   interpolation and silently returned nothing.
+2. **The script itself fetches the full F&O symbol/index list on every run**
+   (`scan_all` calls `get_fno_universe()` unconditionally), even when
+   `--symbols` restricts what actually gets *scanned*. Harmless for a full
+   scan, but means even `--symbols RELIANCE` pays for one extra network round
+   trip. Left as-is rather than patched, since it was added verbatim on
+   request; `custom/oi/`'s own live source does skip the unneeded fetch when
+   given an explicit symbol list.
+
+```bash
+pip install jugaad-data pandas
+python scripts/nse_oi_buildup_scanner.py --symbols RELIANCE,TCS,INFY --threshold 20
+```
+
+---
+
 ## Layout
 
 ```
@@ -496,7 +567,7 @@ custom/oi/
   cli.py               python3 -m custom.oi.cli
   sources/
     bhavcopy.py        NSE end-of-day archive (default)
-    nselive.py         NSE website API (intraday, throttled — see above)
+    nselive.py         NSE website API (intraday, works — see above)
 
 tests/test_oi_*.py     131 tests covering all of the above
 data/oi_cache/         downloaded bhavcopy zips (git-ignored)

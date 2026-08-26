@@ -173,10 +173,14 @@ Alerts look like:
 ```
 
 **Data source:** NSE's official end-of-day F&O bhavcopy archive — free, no
-account, complete coverage, history back to July 2024. NSE's live option-chain
-API is throttled to an empty response for non-residential IPs, so intraday OI
-needs a broker feed (Kite/Upstox/Angel/Dhan); an adapter slot is already in
-place for one.
+account, complete coverage, history back to July 2024. Genuine intraday OI is
+also available today, no broker account needed, via NSE's own live
+option-chain API (`OI_SOURCE=nselive`) — it just needs an explicit `expiry`
+parameter that an earlier version of this scanner didn't send; see
+[docs/OI_SCANNER.md](docs/OI_SCANNER.md#where-the-data-comes-from). It isn't
+the default because it has no historical archive to backtest against and its
+thresholds haven't been re-tuned for an intraday cadence, not because it's
+blocked.
 
 **Before you trade on it:** the signal was backtested over 533 sessions and
 **shows no persistent predictive edge** — it was strongly negative in-sample

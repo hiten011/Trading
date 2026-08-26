@@ -70,7 +70,15 @@ def run_once(
     """Scan the most recent published session (or ``as_of``) and alert."""
     source = get_source(settings.source, cache_dir=settings.cache_dir)
 
-    session = source.load(as_of) if as_of else source.latest()
+    # Only meaningful for a live source: NseLiveSource pays one HTTP round
+    # trip per symbol, so a --symbols subset that never reaches the source
+    # layer means fetching the whole ~210-name universe to alert on five of
+    # them. BhavcopySource ignores this -- one file already holds everything,
+    # so pre-filtering the fetch would save nothing there.
+    symbols = settings.symbols or None
+    session = (
+        source.load(as_of, symbols=symbols) if as_of else source.latest(symbols=symbols)
+    )
     if session is None:
         raise BhavcopyUnavailable(f"No F&O session published for {as_of}")
 
