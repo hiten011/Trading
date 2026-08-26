@@ -4,6 +4,7 @@
 #   docker compose run --rm screener        one-shot scan, results to terminal
 #   docker compose up -d alerts             your own indicator, on a schedule
 #   docker compose --profile bot up -d bot  PKScreener's Telegram bot server
+#   docker compose up -d oi-scanner        F&O open-interest blast alerts
 #
 # Secrets come from secrets/.env.dev (mounted read-only).
 # Knobs come from .env (see .env.example).
@@ -134,6 +135,88 @@ services:
     depends_on:
       data-refresh:
         condition: service_completed_successfully
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+  # ---------------------------------------------------------------------------
+  # F&O option open-interest blast scanner -> Telegram.
+  #   docker compose run --rm oi-scanner --once --dry-run    (test, no telegram)
+  #   docker compose up -d oi-scanner                        (run on schedule)
+  #   docker compose run --rm oi-scanner --backtest --start 2025-01-01 --split
+  #
+  # Reuses the same image as `alerts` -- only the entrypoint differs -- so
+  # there is one thing to build and one thing to keep up to date.
+  #
+  # Deliberately NOT depends_on data-refresh: this scanner reads NSE's F&O
+  # bhavcopy archive directly and never touches PKScreener's candle cache, so
+  # waiting on a ~20 minute full-market download would just delay startup.
+  # ---------------------------------------------------------------------------
+  oi-scanner:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        PKSCREENER_IMAGE: ${PKSCREENER_IMAGE:-pkjmesra/pkscreener}
+        PKSCREENER_TAG: ${PKSCREENER_TAG:-latest}
+    image: trading/pkscreener-alerts:latest
+    container_name: fno-oi-scanner
+    restart: unless-stopped
+    entrypoint: ["python3", "-m", "custom.oi.cli"]
+    command: ["--schedule"]
+    environment:
+      TZ: ${TZ:-Asia/Kolkata}
+      PYTHONPATH: /app
+      GIT_PYTHON_REFRESH: quiet
+      # Absolute paths: the image's WORKDIR is /PKScreener-main, so anything
+      # relative would land outside the mounted volume and be lost on restart.
+      OI_SOURCE: ${OI_SOURCE:-bhavcopy}
+      OI_CACHE_DIR: /app/data/oi_cache
+      OI_STATE_DB: /app/data/oi_state.sqlite
+      OI_REPORTS_DIR: /app/data/oi_reports
+      OI_SYMBOLS: ${OI_SYMBOLS:-}
+      OI_EXCLUDE_INDICES: ${OI_EXCLUDE_INDICES:-0}
+      OI_WATCH_PCT: ${OI_WATCH_PCT:-300}
+      OI_STRONG_PCT: ${OI_STRONG_PCT:-1000}
+      OI_EXTREME_PCT: ${OI_EXTREME_PCT:-2000}
+      OI_MIN_TIER: ${OI_MIN_TIER:-STRONG}
+      OI_MIN_OI_LOTS: ${OI_MIN_OI_LOTS:-500}
+      OI_MIN_PREV_OI_LOTS: ${OI_MIN_PREV_OI_LOTS:-50}
+      OI_MIN_DELTA_OI_LOTS: ${OI_MIN_DELTA_OI_LOTS:-250}
+      OI_MIN_VOLUME_LOTS: ${OI_MIN_VOLUME_LOTS:-100}
+      OI_MIN_NOTIONAL_CR: ${OI_MIN_NOTIONAL_CR:-1}
+      OI_MAX_MONEYNESS_PCT: ${OI_MAX_MONEYNESS_PCT:-10}
+      OI_MIN_DTE: ${OI_MIN_DTE:-2}
+      OI_MAX_DTE: ${OI_MAX_DTE:-45}
+      OI_MAX_EXPIRIES: ${OI_MAX_EXPIRIES:-2}
+      OI_SUPPRESS_ROLLOVER: ${OI_SUPPRESS_ROLLOVER:-1}
+      OI_ROLLOVER_WINDOW_DAYS: ${OI_ROLLOVER_WINDOW_DAYS:-5}
+      OI_MIN_SHARE_OF_SYMBOL_OI: ${OI_MIN_SHARE_OF_SYMBOL_OI:-0.005}
+      OI_MIN_Z_SCORE: ${OI_MIN_Z_SCORE:-0}
+      OI_Z_LOOKBACK: ${OI_Z_LOOKBACK:-20}
+      OI_INCLUDE_NEW_CONTRACTS: ${OI_INCLUDE_NEW_CONTRACTS:-1}
+      OI_REQUIRE_FUTURES_CONFIRM: ${OI_REQUIRE_FUTURES_CONFIRM:-0}
+      OI_MAX_ALERTS: ${OI_MAX_ALERTS:-25}
+      OI_MAX_PER_SYMBOL: ${OI_MAX_PER_SYMBOL:-3}
+      OI_COOLDOWN_HOURS: ${OI_COOLDOWN_HOURS:-12}
+      OI_RUN_AT: ${OI_RUN_AT:-18:30}
+      OI_INTERVAL_MINUTES: ${OI_INTERVAL_MINUTES:-0}
+      OI_TRADING_DAYS_ONLY: ${OI_TRADING_DAYS_ONLY:-1}
+      OI_DRY_RUN: ${OI_DRY_RUN:-0}
+      OI_NOTIFY_EMPTY: ${OI_NOTIFY_EMPTY:-0}
+      OI_ATTACH_CSV: ${OI_ATTACH_CSV:-1}
+      OI_LOG_LEVEL: ${OI_LOG_LEVEL:-INFO}
+    volumes:
+      - ./secrets/.env.dev:/PKScreener-main/.env.dev:ro
+      # Bhavcopy cache, de-dup state and report CSVs all live here, so an
+      # upgrade or a restart never re-downloads history or replays alerts.
+      - ./data:/app/data
+      # Live-edit the scanner without rebuilding.
+      - ./custom:/app/custom
+      - ./config:/app/config:ro
     logging:
       driver: json-file
       options:

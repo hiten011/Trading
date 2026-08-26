@@ -52,3 +52,13 @@ jobs:
         run: |
           docker run --rm -v "$(pwd)/secrets/.env.dev:/PKScreener-main/.env.dev:ro" \
             trading/pkscreener-alerts:latest --check-telegram
+
+      # The OI scanner ships in the same image behind a different entrypoint,
+      # so the build above already covers it -- but nothing until now proves
+      # its modules actually import in there (a missing dependency would only
+      # surface at 18:30 IST in production). --help exercises the whole import
+      # graph without needing NSE to be reachable from a GitHub runner.
+      - name: Smoke-test the OI scanner entrypoint
+        run: |
+          docker run --rm --entrypoint python3 \
+            trading/pkscreener-alerts:latest -m custom.oi.cli --help

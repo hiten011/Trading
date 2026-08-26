@@ -17,6 +17,7 @@ PKScreener stack — all of it lives inside the container.
 | `alerts` | **Your** indicator over the whole market, on a schedule → Telegram | `make up` |
 | `bot` | PKScreener's interactive Telegram bot server | `make bot` |
 | `data-refresh` | Downloads daily candles for every NSE stock | `make data` |
+| `oi-scanner` | **F&O option open-interest blasts** across all ~215 F&O stocks → Telegram | `make oi-up` |
 
 ---
 
@@ -122,8 +123,72 @@ Keeping several strategies side by side: add more files to
 `custom/strategies/`, then switch with `PKS_STRATEGY=<filename>` in `.env`.
 `docker compose run --rm --no-deps alerts --list-strategies` shows what is there.
 
+**One strategy runs per container.** `PKS_STRATEGY` names a single file —
+adding more files does not make one scan evaluate all of them. To run several
+at once, start one `alerts` container per strategy (each with its own
+`PKS_STRATEGY`), or ask and multi-strategy support can be added to the runner.
+
+**New strategy files are tested automatically.** `tests/test_strategy_contract.py`
+discovers everything in `custom/strategies/` at collection time and checks each
+one against the same contract: it loads, it survives awkward market data (flat
+stocks, straight lines, one-bar history, NaNs, zero volume, penny prices), it
+returns a `Signal` or `None`, its numbers are finite, it does not mutate the
+caller's DataFrame, and it is deterministic. Drop in `my_new_thing.py` and CI
+covers it on the next push with no edit to the test file. That matters because
+`custom/runner.py` deliberately swallows per-symbol exceptions so one bad stock
+cannot kill a whole scan — which means a broken indicator looks exactly like an
+indicator that found nothing.
+
 Your edits are live-mounted — no rebuild needed unless you add a pip package
 (then put it in `docker/requirements-custom.txt` and `make build`).
+
+---
+
+## F&O open-interest blast scanner
+
+A second, independent scanner: it watches **option open interest** rather than
+price, across every NSE F&O underlying (~215 names, ~35,000 contracts a
+session), and alerts when a contract's OI jumps past a threshold against the
+previous session.
+
+This replaces the TradingView Pine version, which was capped at ~32 stocks by
+Pine's 64-`request.security()` limit.
+
+```bash
+make oi-build                  # build (same image as `alerts`)
+make oi-dry-run                # scan the latest session, print the alert
+make oi-alert                  # ...and actually send it
+make oi-up                     # run unattended on a schedule
+make oi-logs
+```
+
+Alerts look like:
+
+```
+🔥 GODREJCP 930 CALL SHORT BUILDUP OI NEW 🔴 BEARISH
+   OI 0 → 3,494 lots (new position) · 6.0% of book
+   Px -43.2% (intraday) · Vol 12,836 lots · ₹584.0 Cr
+   Spot 910.01 (-11.2%) · strike 2.2% above
+   25Aug26 · 13d · futures: Short Buildup · PCR 0.49
+```
+
+**Data source:** NSE's official end-of-day F&O bhavcopy archive — free, no
+account, complete coverage, history back to July 2024. NSE's live option-chain
+API is throttled to an empty response for non-residential IPs, so intraday OI
+needs a broker feed (Kite/Upstox/Angel/Dhan); an adapter slot is already in
+place for one.
+
+**Before you trade on it:** the signal was backtested over 533 sessions and
+**shows no persistent predictive edge** — it was strongly negative in-sample
+and strongly positive out-of-sample at similar magnitude, and its long/short
+spread (which is immune to market drift) averages roughly zero. It is a good
+*screener* for finding unusual option positioning across a universe too big to
+watch by hand; it is not a validated strategy. Full numbers, methodology and
+the reasoning behind every filter are in
+[docs/OI_SCANNER.md](docs/OI_SCANNER.md).
+
+Configuration is the `OI_*` block in `.env`. Backtest it yourself with
+`make oi-backtest START=2024-07-01 END=2026-08-25`.
 
 ---
 
@@ -161,6 +226,7 @@ config/pkscreener.ini       PKScreener's own filters (min price, volume ratio…
 config/universe.txt         your own stock list, if PKS_UNIVERSE=file
 
 custom/
+  oi/                         F&O open-interest scanner (see docs/OI_SCANNER.md)
   strategies/my_indicator.py  >>> YOUR INDICATOR GOES HERE <<<
   strategies/base.py          Signal + RSI/EMA/ATR/MACD helpers
   runner.py                   scan → evaluate → alert
@@ -169,7 +235,7 @@ custom/
   notify.py                   Telegram transport
   report.py                   formats the alert table
 
-tests/                      117 tests: run with `make test`
+tests/                      276 tests: run with `make test`
 .github/workflows/tests.yml CI: runs the tests + a Docker build check on every push/PR
 data/                       downloaded candles (git-ignored)
 ```
