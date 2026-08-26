@@ -19,6 +19,7 @@ from typing import List, Optional, Sequence
 from custom import strategies
 from custom.config import Settings, configure_logging
 from custom.data import NoDataAvailable, apply_liquidity_filters, load_candles
+from custom.datarefresh import DataRefreshError, refresh_if_stale
 from custom.notify import TelegramError, TelegramNotifier
 from custom.report import build_message, write_csv
 from custom.strategies.base import Signal
@@ -192,6 +193,21 @@ def next_run_at(now: datetime, run_times: Sequence[tuple], trading_days_only: bo
     return min(candidates)
 
 
+def _refresh_data_if_due(settings: Settings) -> None:
+    """Keep the cache from going stale over a long-running container's lifetime.
+
+    Only called from run_scheduled -- --once stays fast and predictable for
+    `make dry-run` iteration, which would otherwise wait on a ~10-30 minute
+    download every single test run.
+    """
+    if not settings.auto_refresh_data:
+        return
+    try:
+        refresh_if_stale(settings.data_dirs, settings.data_max_age_hours)
+    except DataRefreshError as exc:
+        LOGGER.warning("Data refresh failed, scanning against the existing cache: %s", exc)
+
+
 def run_scheduled(
     settings: Settings, notifier: TelegramNotifier, symbols: Optional[List[str]] = None
 ) -> int:
@@ -200,6 +216,7 @@ def run_scheduled(
     if settings.interval_minutes > 0:
         LOGGER.info("Scanning every %d minute(s)", settings.interval_minutes)
         while True:
+            _refresh_data_if_due(settings)
             _guarded_scan(settings, notifier, symbols)
             time.sleep(settings.interval_minutes * 60)
 
@@ -221,6 +238,7 @@ def run_scheduled(
         seconds = max((upcoming - now).total_seconds(), 1)
         LOGGER.info("Next scan at %s (in %.0f min)", upcoming.strftime("%Y-%m-%d %H:%M"), seconds / 60)
         time.sleep(seconds)
+        _refresh_data_if_due(settings)
         _guarded_scan(settings, notifier, symbols)
         time.sleep(60)  # do not re-fire inside the same minute
 

@@ -7,7 +7,7 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from custom import runner
+from custom import datarefresh, runner
 from custom.config import Settings
 from custom.notify import TelegramNotifier
 from custom.report import build_message, render_table, to_frame, write_csv
@@ -198,6 +198,92 @@ def test_next_run_skips_the_weekend_on_trading_days_only():
 def test_next_run_includes_the_weekend_when_told_to():
     friday_evening = datetime(2024, 5, 3, 16, 0)
     assert runner.next_run_at(friday_evening, [(15, 45)], False) == datetime(2024, 5, 4, 15, 45)
+
+
+# --- auto data refresh -----------------------------------------------------
+
+def test_refresh_is_skipped_when_disabled(monkeypatch):
+    called = []
+    monkeypatch.setattr(runner, "refresh_if_stale", lambda *a, **k: called.append(True))
+    settings = Settings(auto_refresh_data=False)
+    runner._refresh_data_if_due(settings)
+    assert called == []
+
+
+def test_refresh_is_attempted_when_enabled(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        runner,
+        "refresh_if_stale",
+        lambda data_dirs, max_age_hours: captured.update(data_dirs=data_dirs, max_age_hours=max_age_hours),
+    )
+    settings = Settings(
+        auto_refresh_data=True,
+        data_max_age_hours=12,
+        data_dir="/a/results/Data:/a/actions-data-download",
+    )
+    runner._refresh_data_if_due(settings)
+    assert captured["data_dirs"] == ["/a/results/Data", "/a/actions-data-download"]
+    assert captured["max_age_hours"] == 12
+
+
+def test_a_refresh_failure_does_not_crash_the_caller(monkeypatch):
+    def boom(*a, **k):
+        raise datarefresh.DataRefreshError("downloader exited 1")
+
+    monkeypatch.setattr(runner, "refresh_if_stale", boom)
+    settings = Settings(auto_refresh_data=True)
+    runner._refresh_data_if_due(settings)  # must not raise
+
+
+def test_once_mode_never_triggers_a_refresh(cache_dir, monkeypatch):
+    """--once must stay fast for `make dry-run` iteration -- no download wait."""
+    called = []
+    monkeypatch.setattr(runner, "refresh_if_stale", lambda *a, **k: called.append(True))
+    notifier = _RecordingNotifier()
+    runner.run_scan(_settings(cache_dir, auto_refresh_data=True), notifier)
+    assert called == []
+
+
+def test_scheduled_interval_mode_refreshes_before_each_scan(monkeypatch):
+    calls = []
+    monkeypatch.setattr(runner, "_refresh_data_if_due", lambda settings: calls.append("refresh"))
+    monkeypatch.setattr(runner, "_guarded_scan", lambda *a, **k: calls.append("scan"))
+
+    call_count = {"n": 0}
+
+    def fake_sleep(_seconds):
+        call_count["n"] += 1
+        if call_count["n"] >= 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(runner.time, "sleep", fake_sleep)
+    settings = Settings(interval_minutes=5)
+    with pytest.raises(KeyboardInterrupt):
+        runner.run_scheduled(settings, _RecordingNotifier())
+
+    assert calls[:2] == ["refresh", "scan"]
+
+
+def test_scheduled_run_at_mode_refreshes_before_each_scan(monkeypatch):
+    calls = []
+    monkeypatch.setattr(runner, "_refresh_data_if_due", lambda settings: calls.append("refresh"))
+    monkeypatch.setattr(runner, "_guarded_scan", lambda *a, **k: calls.append("scan"))
+    monkeypatch.setattr(runner, "now_in", lambda tz: datetime(2024, 5, 1, 15, 44))
+
+    call_count = {"n": 0}
+
+    def fake_sleep(_seconds):
+        call_count["n"] += 1
+        if call_count["n"] >= 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(runner.time, "sleep", fake_sleep)
+    settings = Settings(run_at=["15:45"], trading_days_only=False)
+    with pytest.raises(KeyboardInterrupt):
+        runner.run_scheduled(settings, _RecordingNotifier())
+
+    assert calls[:2] == ["refresh", "scan"]
 
 
 # --- CLI -------------------------------------------------------------------

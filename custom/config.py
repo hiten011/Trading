@@ -152,6 +152,13 @@ class Settings:
     data_dir: str = "/PKScreener-main/results/Data:/PKScreener-main/actions-data-download"
     lookback_days: int = 250
 
+    # A single --schedule container refreshes its own cache periodically
+    # (see custom/datarefresh.py) rather than needing a separate data-refresh
+    # container or an external cron -- this is what keeps a container running
+    # on a server for weeks from scanning ever-more-stale candles.
+    auto_refresh_data: bool = True
+    data_max_age_hours: float = 20.0
+
     # --- pre-filters applied before the indicator runs --------------------
     min_price: float = 20.0
     max_price: float = 100000.0
@@ -186,6 +193,8 @@ class Settings:
                 "/PKScreener-main/results/Data:/PKScreener-main/actions-data-download",
             ),
             lookback_days=_env_int("PKS_LOOKBACK_DAYS", 250),
+            auto_refresh_data=_env_bool("PKS_AUTO_REFRESH_DATA", True),
+            data_max_age_hours=_env_float("PKS_DATA_MAX_AGE_HOURS", 20.0),
             min_price=_env_float("PKS_MIN_PRICE", 20.0),
             max_price=_env_float("PKS_MAX_PRICE", 100000.0),
             min_avg_volume=_env_float("PKS_MIN_AVG_VOLUME", 100000.0),
