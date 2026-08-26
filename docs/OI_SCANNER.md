@@ -245,16 +245,28 @@ make oi-backtest START=2024-07-01 END=2026-08-25 CSV=data/oi_backtest.csv
 
 The honest next steps, roughly in order of expected value:
 
-1. **Test a shorter horizon.** Everything here is measured from D+1's close.
-   Most of the reaction to an OI event may land in D+1's *open*, which this
-   deliberately gives up. Bhavcopy cannot answer that — it needs intraday data.
-2. **Condition on the underlying's move**, not just OI. The alerted names in
-   several quarters had large raw moves in both directions; OI may be a
-   volatility marker rather than a direction marker.
-3. **Test it as a volatility signal instead** — does an OI blast predict the
-   underlying's realised range over the next few days, regardless of sign?
-   Nothing measured here rules that out, and it is the more plausible
-   hypothesis given the results.
+1. **Test it as a volatility signal, not a direction signal.** This is the
+   most promising avenue, and it is free — the data is already cached. The
+   alerted names moved substantially in *both* directions, which is what you
+   would see if an OI blast predicts "this name is about to move" without
+   saying which way. That is measurable with what is here (realised range over
+   the next N sessions vs the symbol's own baseline) and does not need a
+   direction call to be worth anything.
+
+2. **A faster feed is probably not the fix.** It is tempting to assume the
+   edge is being lost between the signal and a realistic entry. Measured, that
+   gap is small: the signed move from the signal day's close to the next day's
+   close is **+0.13% in-sample and +0.23% out-of-sample** for the shipped
+   configuration (hit rate ~51%), and roughly zero for the unfiltered logic. A
+   signal decaying fast would show a large reaction return and flat later
+   horizons; this shows neither. Intraday data would still answer a question
+   daily data cannot — what happens *during* the session the OI builds in —
+   but do not buy a broker feed expecting speed alone to rescue the direction
+   call.
+
+3. **Condition on the underlying's own move**, not just OI, and check whether
+   the signal is simply a momentum or reversal proxy in disguise.
+
 4. **Drop the direction claim** and use it purely as an attention filter,
    which is what the evidence currently supports.
 
