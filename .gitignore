@@ -1,7 +1,8 @@
-# ---- Secrets: never commit these ----
-.env
-.env.dev
-secrets/.env.dev
+# ---- Credentials ----
+# .env and secrets/.env.dev are INTENTIONALLY committed in this repo (owner's
+# explicit choice, repo is public) so the setup works with zero configuration
+# after cloning. Don't reflexively re-add them here -- see secrets/.env.dev
+# for the rationale.
 *.pem
 *.key
 

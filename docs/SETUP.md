@@ -22,48 +22,53 @@ No Python, no TA-Lib, no pip installs on your machine.
 make setup
 ```
 
-Copies `.env.example` → `.env` and `secrets/.env.dev.example` → `secrets/.env.dev`,
-creates the data directories, and checks Docker is running. Existing files are
-never overwritten.
+Creates `.env` from the template and the data directories, and checks Docker
+is running, if you haven't already. Existing files are never overwritten.
+`secrets/.env.dev` doesn't need this step — see below.
 
 ---
 
 ## 2. Telegram credentials
 
-### The bot token
-
-@BotFather → `/newbot` → name → username ending in `bot` → it replies with:
-
-```
-Use this token to access the HTTP API:
-8123456789:AAF-abcdefghijklmnopqrstuvwxyz
-```
-
-### Your chat id
-
-Message [@userinfobot](https://t.me/userinfobot). It replies with `Id: 5058733760`.
-
-### Fill them in
+`secrets/.env.dev` is **already committed to this repo with real
+credentials** — the owner's explicit choice, given the repo is public, in
+exchange for a genuinely zero-setup clone. Nothing to fill in; `make
+check-telegram` (step 4) should just work.
 
 ```ini
-# secrets/.env.dev
-TOKEN='8123456789:AAF-abcdefghijklmnopqrstuvwxyz'
-chat_idADMIN='5058733760'
-CHAT_ID='5058733760'
+# secrets/.env.dev, already in the repo
+TOKEN='8846...'          # a real bot token
+chat_idADMIN='8096928582'
+CHAT_ID='8096928582'
 ```
-
-`CHAT_ID` is only read by PKScreener's own bot/barometer modes. Setting it to the
-same value is fine.
-
-> **Telegram will not let a bot start a conversation.** Open your new bot's chat
-> and send it `/start` before going further, or every message will vanish.
 
 ### Why three keys for two values
 
 `TOKEN` and `CHAT_ID` are the names PKScreener's own code expects, so one file
 serves both PKScreener and our runner. One quirk: PKScreener prepends a `-` to
-`CHAT_ID` at send time (it assumes a channel). Our runner detects which form you
-used and does the right thing either way.
+`CHAT_ID` at send time (it assumes a channel). Our runner detects which form
+you used and does the right thing either way.
+
+### Using your own bot instead
+
+1. @BotFather → `/newbot` → name → username ending in `bot` → it replies with
+   a token like `8123456789:AAF-abcdefghijklmnopqrstuvwxyz`.
+2. Message [@userinfobot](https://t.me/userinfobot) → it replies with
+   `Id: 5058733760`.
+3. Put both in `secrets/.env.dev` as `TOKEN` and `chat_idADMIN`.
+4. **Send your new bot any message** (`/start` works) before testing it —
+   Telegram won't let a bot speak first, so alerts go nowhere silently
+   without this step.
+
+### Rotating or protecting the committed token
+
+- **Revoke it**: @BotFather → `/revoke` (or `/token`) on the bot. The old
+  token stops working immediately; put the new one in `secrets/.env.dev`.
+- **Make the repo private**: GitHub Settings → General → Danger Zone. No code
+  changes needed — the same committed file just stops being publicly visible.
+- **Un-commit it**: add `secrets/.env.dev` back to `.gitignore`, keep the real
+  values local-only, and add `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` under
+  repo Settings → Secrets and variables → Actions for CI instead.
 
 ---
 
@@ -266,26 +271,20 @@ pytest tests/test_live_telegram.py -v -rs
 
 ## Continuous integration
 
-`.github/workflows/tests.yml` runs on every push and pull request:
+`.github/workflows/tests.yml` runs on every push and pull request, with zero
+GitHub-side configuration needed -- `secrets/.env.dev` is committed to the
+repo, so every checkout (including CI's) already has real credentials:
 
-- **`unit-tests`** -- installs `requirements-test.txt`, runs `make test`.
-- **`docker-build`** -- runs `docker compose build alerts`, then
-  `docker run trading/pkscreener-alerts:latest --list-strategies` as a smoke
-  check that the built image actually starts.
+- **`unit-tests`** -- installs `requirements-test.txt`, runs `make test`
+  (including the two live-Telegram tests -- a real message every push/PR).
+- **`docker-build`** -- runs `docker compose build alerts`, smoke-tests the
+  built image with `--list-strategies`, then mounts the committed
+  `secrets/.env.dev` into the real container and runs `--check-telegram` --
+  a second real message, this time proving the actual Docker image works,
+  not just the Python code.
 
-To get a real Telegram message on every push (both jobs will send one, so two
-per push/PR), add two repository secrets --
-**Settings → Secrets and variables → Actions → New repository secret**:
-
-| Secret name | Value |
-|---|---|
-| `TELEGRAM_BOT_TOKEN` | Same value as `TOKEN` in your local `secrets/.env.dev` |
-| `TELEGRAM_CHAT_ID` | Same value as `chat_idADMIN` in your local `secrets/.env.dev` |
-
-These are separate from the local file on purpose -- `secrets/.env.dev` never
-leaves your machine (it's git-ignored), so CI needs its own copy of the same
-two values, under the names our code already recognizes as environment-variable
-overrides. Without them, both jobs still pass; the live-message tests/step
-just skip, which also means an outside contributor's pull request (which never
-gets access to your secrets) builds and tests cleanly without ever seeing your
-bot token.
+If you ever move credentials back out of git (see "Rotating or protecting
+the committed token" above), CI stops getting real values automatically --
+add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` under repo **Settings →
+Secrets and variables → Actions** to restore the live checks; both jobs
+still pass without them either way, the live-message parts just skip.

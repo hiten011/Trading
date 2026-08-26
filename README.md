@@ -22,14 +22,15 @@ PKScreener stack — all of it lives inside the container.
 
 ## Quick start
 
+Telegram credentials are already committed in this repo (`secrets/.env.dev`) —
+see **Credentials** below for why. Clone and go:
+
 ```bash
 git clone <this repo> && cd Trading
-make setup                # creates .env and secrets/.env.dev
-$EDITOR secrets/.env.dev  # paste your Telegram token + chat id (see below)
 make build                # pulls pkjmesra/pkscreener, builds the alerts image
-make check-telegram       # sends you a test message
+make check-telegram       # sends you a test message -- should just work
 make data                 # downloads candles for every NSE stock (slow, once a day)
-make dry-run              # runs your indicator, prints the alert instead of sending
+make dry-run               # runs your indicator, prints the alert instead of sending
 make up                   # runs it for real, on the schedule in .env
 make logs                 # watch it work
 ```
@@ -38,47 +39,47 @@ make logs                 # watch it work
 
 ---
 
-## What I need from you
+## Credentials
 
-Two values. That is the whole list.
+`secrets/.env.dev` in this repo holds a **real** Telegram bot token and chat
+id, committed on purpose so cloning this repo is genuinely zero-setup — no
+file to create, no values to paste in. That's only reasonable because this
+repo is public and the owner explicitly chose that trade-off: anyone who can
+see this repo can see (and use) that bot token.
 
-### 1. A Telegram bot token
+If that's ever not what you want:
 
-1. Open Telegram, message **[@BotFather](https://t.me/BotFather)**
-2. Send `/newbot`, pick a name and a username ending in `bot`
-3. It replies with a token like `8123456789:AAF-abcdefghijklmnopqrstuvwxyz`
+- **Rotate the token** — message [@BotFather](https://t.me/BotFather) →
+  `/revoke` (or `/token`) on the bot, which invalidates the old one instantly,
+  then put the new one in `secrets/.env.dev`.
+- **Make it private again** — GitHub Settings → General → Danger Zone. The
+  committed credentials stop being publicly visible; no code changes needed.
+- **Go back to a git-ignored secrets file** — add `secrets/.env.dev` back to
+  `.gitignore`, keep the real values local-only, and (for CI) add
+  `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` under repo Settings → Secrets and
+  variables → Actions instead.
 
-Put it in `secrets/.env.dev` as `TOKEN`.
+Setting up your OWN bot from scratch, if you ever need to: message
+[@BotFather](https://t.me/BotFather) → `/newbot` for a token, message
+[@userinfobot](https://t.me/userinfobot) for your chat id, then **send your
+bot any message first** (`/start` works) — Telegram won't let a bot speak
+first, so alerts go nowhere silently without this step. Put both values in
+`secrets/.env.dev` (`TOKEN` and `chat_idADMIN`) and verify with
+`make check-telegram`.
 
-### 2. Your Telegram chat id
+A group or channel works too instead of a DM — add the bot as admin, use the
+channel id (`-100…`) as `chat_idADMIN`. Both the signed and unsigned forms work.
 
-1. Message **[@userinfobot](https://t.me/userinfobot)**
-2. It replies with your numeric `Id`, e.g. `5058733760`
+### Your indicator rules
 
-Put it in `secrets/.env.dev` as `chat_idADMIN`.
+The shipped example (`custom/strategies/my_indicator.py`) is a placeholder —
+a volume-backed breakout screen. Tell me the conditions you actually want in
+plain English ("RSI under 30 and price above the 200 EMA and volume twice its
+average") and I'll write it, or edit it yourself — see below.
 
-Then **send your new bot any message** (`/start` is fine). Telegram will not let a
-bot message you first — without this the alerts silently go nowhere.
-
-```ini
-# secrets/.env.dev
-TOKEN='8123456789:AAF-abcdefghijklmnopqrstuvwxyz'
-chat_idADMIN='5058733760'
-CHAT_ID='5058733760'
-```
-
-Verify both with `make check-telegram` — it messages you and prints the bot's
-username. That file is git-ignored; it never leaves your machine.
-
-### Optional, only if you want them
-
-- **A group or channel instead of a DM** — add the bot as an admin, then use the
-  channel id (`-100…`) as `chat_idADMIN`. Both the signed and unsigned forms work.
-- **Your actual indicator rules.** The shipped example is a placeholder. Tell me
-  the conditions in plain English ("RSI under 30 and price above the 200 EMA and
-  volume twice its average") and I will write it, or write it yourself — see below.
-- **Intraday alerts.** Right now everything is daily candles. Intraday needs a
-  live data feed; PKScreener supports one but it needs broker credentials.
+Intraday alerts aren't wired up: everything here runs on daily candles.
+Intraday needs a live data feed, which needs broker credentials PKScreener
+doesn't provide for free.
 
 ---
 
@@ -155,7 +156,7 @@ Run `docker compose --profile manual run --rm screener` for the full interactive
 docker-compose.yml          the four services
 docker/Dockerfile           our image: FROM pkjmesra/pkscreener + custom code
 .env                        knobs (schedule, filters, which strategy)
-secrets/.env.dev            Telegram credentials — git-ignored
+secrets/.env.dev            Telegram credentials — committed (see Credentials above)
 config/pkscreener.ini       PKScreener's own filters (min price, volume ratio…)
 config/universe.txt         your own stock list, if PKS_UNIVERSE=file
 
@@ -182,21 +183,18 @@ pip install -r requirements-test.txt
 make test
 ```
 
-Runs the full suite, hermetic by default (no Docker, no network, no market
-data needed). Two of those tests are a deliberate exception: if
-`secrets/.env.dev` is filled in, `make test` also sends a real Telegram
-message through the real Bot API, so you get live proof it's actually wired up
-correctly — not just that the code would format a message right. No secrets
-yet? Those two skip cleanly; everything else still runs.
+Runs the full suite (no Docker, no market data needed for most of it). Two of
+those tests are a deliberate exception: since `secrets/.env.dev` has real
+credentials, `make test` also sends a real Telegram message through the real
+Bot API every time, so you get live proof it's actually wired up correctly —
+not just that the code would format a message right.
 
 This also runs automatically in GitHub Actions on every push and pull
 request (`.github/workflows/tests.yml`), plus a second job that rebuilds the
-Docker image to catch anything a pure Python test can't. To get a live
-Telegram message on CI runs too, add two repo secrets under **Settings →
-Secrets and variables → Actions**: `TELEGRAM_BOT_TOKEN` and
-`TELEGRAM_CHAT_ID`, same values as `TOKEN`/`chat_idADMIN` in your local
-`secrets/.env.dev`. Full details, including exactly what is and isn't
-covered, in [docs/SETUP.md](docs/SETUP.md#running-the-tests).
+Docker image and sends its own live Telegram message through the actual
+container — both work with zero configuration in GitHub, since the checkout
+already has the same committed credentials. Full details, including exactly
+what is and isn't covered, in [docs/SETUP.md](docs/SETUP.md#running-the-tests).
 
 ---
 

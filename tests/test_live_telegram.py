@@ -6,12 +6,12 @@ Telegram session, no network, no secrets. This file is the one deliberate
 exception: it exists so `make test` can prove, on demand, that a real message
 reaches your real phone -- not just that our code *would* format one correctly.
 
-It skips itself (not fails) when no credentials are available, so the default
-`pytest tests` run stays safe for a fresh clone, a contributor without your
-bot token, or a pull request from a fork:
-
-    secrets/.env.dev      TOKEN + chat_idADMIN           (local)
-    environment            TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID   (CI)
+secrets/.env.dev is committed to this repo with real credentials (see that
+file for why), so this runs for real both locally and in CI -- no separate
+setup needed either place. It still skips gracefully (not fails) if that ever
+changes and no credentials are found, rather than breaking the whole suite:
+either secrets/.env.dev with TOKEN + chat_idADMIN, or TELEGRAM_BOT_TOKEN +
+TELEGRAM_CHAT_ID as environment variables, whichever is present.
 
 Run just this file to check credentials without the rest of the suite:
     pytest tests/test_live_telegram.py -v -rs

@@ -25,7 +25,7 @@ if [[ ! -f secrets/.env.dev ]]; then
   chmod 600 secrets/.env.dev
   ok "Created secrets/.env.dev - now fill in TOKEN and chat_idADMIN"
 else
-  ok "secrets/.env.dev already exists (left alone)"
+  ok "secrets/.env.dev already exists (left alone -- this repo commits it with real credentials)"
 fi
 
 mkdir -p data/results
@@ -34,11 +34,8 @@ ok "Created data/results for the candle cache"
 echo
 info "Next steps"
 cat <<'STEPS'
-  1. Put your Telegram bot token and chat id in secrets/.env.dev
-       TOKEN='<from @BotFather>'
-       chat_idADMIN='<from @userinfobot>'
-  2. Verify them:        make check-telegram
-  3. Download candles:   make data
-  4. Test your scan:     make dry-run
-  5. Go live:            make up
+  1. Verify Telegram:    make check-telegram
+  2. Download candles:   make data
+  3. Test your scan:     make dry-run
+  4. Go live:            make up
 STEPS

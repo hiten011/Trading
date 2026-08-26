@@ -12,11 +12,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Fast, hermetic unit suite (no Docker, no real market data). Includes a
-  # live Telegram check that only fires when TELEGRAM_BOT_TOKEN and
-  # TELEGRAM_CHAT_ID are set as repo secrets -- add those in
-  # Settings -> Secrets and variables -> Actions to get a real message on
-  # every push/PR; without them this step still passes, it just skips two tests.
+  # Fast, hermetic-by-default unit suite (no Docker, no real market data).
+  # secrets/.env.dev is committed to this repo (see that file for why), so
+  # the checkout already has real credentials -- no GitHub Actions secrets
+  # to configure. That also means the two live-Telegram tests in here send a
+  # real message on every push/PR, not just a local `make test`.
   unit-tests:
     runs-on: ubuntu-latest
     steps:
@@ -32,9 +32,6 @@ jobs:
         run: pip install -r requirements-test.txt
 
       - name: Run the test suite
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: make test
 
   # Confirms the Dockerfile still builds against upstream's current
@@ -52,10 +49,6 @@ jobs:
         run: docker run --rm trading/pkscreener-alerts:latest --list-strategies
 
       - name: Live Telegram check through the real container
-        if: ${{ secrets.TELEGRAM_BOT_TOKEN != '' }}
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          docker run --rm -e TELEGRAM_BOT_TOKEN -e TELEGRAM_CHAT_ID \
+          docker run --rm -v "$(pwd)/secrets/.env.dev:/PKScreener-main/.env.dev:ro" \
             trading/pkscreener-alerts:latest --check-telegram
