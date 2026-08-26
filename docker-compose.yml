@@ -78,6 +78,13 @@ services:
   # Edit custom/strategies/my_indicator.py, then:
   #   docker compose run --rm alerts --once --dry-run   (test, no telegram)
   #   docker compose up -d alerts                        (run on schedule)
+  #
+  # In --schedule mode (the default CMD, what `up -d` runs) this container
+  # refreshes its own market-data cache periodically -- see PKS_AUTO_REFRESH_DATA
+  # below and custom/datarefresh.py. That's what makes `docker compose up -d
+  # alerts` a real "deploy once, forget about it" story on a server: no
+  # external cron re-running `make data`, no separate always-on data-refresh
+  # container to babysit.
   # ---------------------------------------------------------------------------
   alerts:
     build:
@@ -101,6 +108,8 @@ services:
       PKS_UNIVERSE: ${PKS_UNIVERSE:-auto}
       PKS_INDEX_OPTION: ${PKS_INDEX_OPTION:-12}
       PKS_LOOKBACK_DAYS: ${PKS_LOOKBACK_DAYS:-250}
+      PKS_AUTO_REFRESH_DATA: ${PKS_AUTO_REFRESH_DATA:-1}
+      PKS_DATA_MAX_AGE_HOURS: ${PKS_DATA_MAX_AGE_HOURS:-20}
       PKS_MIN_PRICE: ${PKS_MIN_PRICE:-20}
       PKS_MAX_PRICE: ${PKS_MAX_PRICE:-100000}
       PKS_MIN_AVG_VOLUME: ${PKS_MIN_AVG_VOLUME:-100000}

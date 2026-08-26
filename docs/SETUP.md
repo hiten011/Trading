@@ -175,6 +175,43 @@ Stop with `make down`.
 
 ---
 
+## Running this on a server (AWS or anywhere else)
+
+`make up` only starts containers on whatever machine runs it. For alerts to
+fire while your laptop is closed, `docker compose up -d alerts` needs to run
+on something that's always on -- an EC2 instance, a cheap VPS
+(Hetzner/DigitalOcean are simpler and cheaper than AWS for a workload this
+small), or an always-on machine you already have. AWS isn't required
+specifically; an always-on Docker host is.
+
+The steps are identical to everything above, just run on that server instead
+of your laptop:
+
+```bash
+# on the server, after installing Docker + the compose plugin
+git clone <this repo> && cd Trading
+make build
+make data          # first warm-up download; slow, only needed once
+make up            # starts the scheduler, restart: unless-stopped
+make logs          # confirm it's scanning and alerting
+```
+
+That's genuinely the whole deployment -- one `docker-compose.yml`, no
+separate always-on data-refresh process or external cron to set up. The
+`alerts` container refreshes its own market-data cache periodically on its
+own (`PKS_AUTO_REFRESH_DATA`, default on, refreshes once the cache is
+`PKS_DATA_MAX_AGE_HOURS` old -- 20h by default), so leaving it running for
+weeks doesn't mean scanning ever-more-stale candles. `restart:
+unless-stopped` brings it back after the server reboots, as long as Docker
+itself is set to start on boot (`sudo systemctl enable docker` on most Linux
+distros, on by default on EC2's standard AMIs).
+
+Sizing: PKScreener's own image needs about 2 vCPUs / 4GB RAM comfortably
+during a scan (an `t3.small`/`t3.medium` on AWS, or equivalent). The
+candle cache is a few hundred MB; nothing else is disk-heavy.
+
+---
+
 ## 9. PKScreener's own bot (optional)
 
 ```bash

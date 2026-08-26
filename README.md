@@ -203,11 +203,26 @@ what is and isn't covered, in [docs/SETUP.md](docs/SETUP.md#running-the-tests).
 `data-refresh` runs PKScreener's downloader, which writes one pickle holding
 daily candles for every NSE symbol. `alerts` reads that same pickle — so your
 indicator runs against the whole market in about 20 seconds and never touches a
-data API itself. Re-run `make data` once a day (or let the compose dependency do
-it when `alerts` starts).
+data API itself. In `--schedule` mode (what `make up` runs), `alerts` also
+refreshes that cache on its own once it's more than `PKS_DATA_MAX_AGE_HOURS`
+old (20h by default) — no daily cron job needed.
 
 If the cache is missing, the runner falls back to downloading from Yahoo, which
 is much slower. The error message tells you which case you are in.
+
+---
+
+## Running this unattended (AWS or any always-on server)
+
+`make up` only starts containers on the machine you run it on — for alerts to
+fire while your laptop is off, `docker compose up -d alerts` needs to run
+somewhere always-on: an EC2 instance, a cheap VPS, or a machine you already
+leave running. Same commands as above, just run there instead:
+`make build && make data && make up`. That one `docker-compose.yml` really is
+the whole deployment — no separate cron or always-on data-refresh process,
+since `alerts` now keeps its own cache fresh. Full walkthrough (instance
+sizing, keeping Docker running across reboots) in
+[docs/SETUP.md](docs/SETUP.md#running-this-on-a-server-aws-or-anywhere-else).
 
 ---
 
