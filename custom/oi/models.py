@@ -229,6 +229,13 @@ class UnderlyingContext:
     spot: float
     prev_spot: float = 0.0
 
+    # Whether this underlying is an index rather than a single stock. Taken
+    # from the exchange's own instrument type where the source reports one
+    # (bhavcopy's IDO/IDF), because a hardcoded name list silently misses
+    # newly listed indices -- NIFTYFPI trades 366 option contracts a session
+    # and is not a name anyone thinks to add to such a list.
+    is_index: bool = False
+
     total_call_oi: float = 0.0
     total_put_oi: float = 0.0
     prev_total_call_oi: float = 0.0

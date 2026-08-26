@@ -219,7 +219,7 @@ def scan_session(
         if allowed is not None and symbol not in allowed:
             reject["not_in_universe"] += 1
             continue
-        if settings.exclude_indices and symbol in INDEX_SYMBOLS:
+        if settings.exclude_indices and _is_index(symbol, contexts.get(symbol)):
             reject["index"] += 1
             continue
 
@@ -323,6 +323,18 @@ def scan_session(
     result.alerts = _rank_and_cap(hits, settings)
     LOGGER.info("%s", result.summary())
     return result
+
+
+def _is_index(symbol: str, context: Optional[UnderlyingContext]) -> bool:
+    """Prefer the exchange's own classification over a hardcoded name list.
+
+    Bhavcopy tags index options as ``IDO``, so the flag is authoritative there.
+    The live NSE source has no equivalent field, so the name list stays as a
+    fallback for it.
+    """
+    if context is not None and context.is_index:
+        return True
+    return symbol in INDEX_SYMBOLS
 
 
 def _futures_bias(buildup: Buildup) -> Bias:
