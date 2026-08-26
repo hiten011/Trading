@@ -23,6 +23,15 @@ from pathlib import Path
 
 import pytest
 
+# The script itself calls sys.exit() at import time if jugaad-data is
+# missing (its own documented behaviour, reasonable for a CLI tool run
+# directly). Executed via exec_module for testing, that SystemExit would
+# otherwise escape pytest's collection machinery entirely and abort the
+# *whole* test session with an INTERNALERROR -- not just skip this file --
+# taking down every other test alongside it. importorskip fails safe:
+# missing the dependency skips only these tests, with a clear reason.
+pytest.importorskip("jugaad_data", reason="jugaad-data not installed")
+
 SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "nse_oi_buildup_scanner.py"
 
 
